@@ -1,4 +1,4 @@
-import { _decorator, Component, instantiate, Event, ScrollView, Button } from 'cc';
+import { _decorator, Component, instantiate, Node, ScrollView, Button } from 'cc';
 import { TowerData } from '../database/TowerData';
 import { TowerDungeonEvent, TowerFloor } from './TowerFloor';
 import { PopupWindowComponent } from '../window/PopupWindowComponent';
@@ -10,19 +10,22 @@ const { ccclass, property } = _decorator;
 export class Tower extends Component {
 
     @property(ScrollView)
-    private scrollView: ScrollView = null;
+    private scrollView: ScrollView = null!;
 
     @property(PopupWindowComponent)
-    popupWindow: PopupWindowComponent = null;
+    private popupWindow: PopupWindowComponent = null!;
 
     @property(Button)
-    leaveButton: Button = null;
+    private leaveButton: Button = null;
 
     private _towerId: string = '';
     private _towerData: TowerData = null;
     private _floorCount: number = 0;
     private _floorIndex: number = 0;
     private _stage: { [key: string]: string }[] = [];
+
+    // 在塔構築後只有一次性的物件
+    private _resolved: string[] = [];
 
     protected onLoad(): void {
         this.node.on(TowerDungeonEvent.CLEAR_TOWER_FLOOR, this.onClearTowerFloor, this);
@@ -48,11 +51,14 @@ export class Tower extends Component {
     build(towerId: string): void {
         this._towerId = towerId;
         const data = StorageTool.loadFromFile(`${this._towerId}_tower_data`);
-        console.log(data);
         if (data) {
             this._floorIndex = data.index;
-            this.setFakeTowerData(towerId);
-        } else {
+            this._stage = data.stage;
+            this._resolved = data.resolved;
+            this._floorCount = this._stage.length;
+            console.log(this._resolved);
+        }
+        else {
             this.setFakeTowerData(towerId);
             this._floorIndex = 0;
             this._stage.length = 0;
@@ -69,6 +75,7 @@ export class Tower extends Component {
 
         if (active) {
             this.buildTower();
+            this.updateTower();
         } else {
             const children = this.scrollView.content.children;
             children.forEach((child) => child.off('click'));
@@ -78,15 +85,9 @@ export class Tower extends Component {
     }
 
     private buildTower(): void {
-        const children = this.scrollView.content.children;
-        children.forEach((child) => child.active = false);
+        if (this._stage.length)
+            return;
 
-        const prefab = instantiate(children[0]);
-        const index = this._floorIndex;
-        this.leaveButton.node.active = index === this._floorCount;
-        console.log(`Building tower floor ${index} / ${this._floorCount}`);
-
-        this._stage = [];
         for (let i = 0; i < this._floorCount; i++) {
             const stageContents: { [key: string]: string }[] = [];
 
@@ -99,7 +100,18 @@ export class Tower extends Component {
 
             const floorContent = stageContents.sort(() => Math.random() - 0.5).shift();
             this._stage.push(floorContent);
+        }
 
+        this._floorCount = this._stage.length;
+    }
+
+    updateTower(): void {
+        const children = this.scrollView.content.children;
+        children.forEach((child) => child.active = false);
+
+        const prefab = instantiate(children[0]);
+        let index = this._floorIndex;
+        this._stage.forEach((floorContent, i) => {
             let floorNode = children[i];
             if (!floorNode) {
                 floorNode = instantiate(prefab);
@@ -107,31 +119,35 @@ export class Tower extends Component {
             }
             floorNode.active = true;
 
-            const isReady = i >= index;
+            let isResolved = this._resolved.indexOf(floorContent.id) > -1;
+            if (isResolved && index === i) {
+                index++;
+                this._floorIndex = index;
+            }
+            const isReady = i >= index || isResolved;
             const floor = floorNode.getComponent(TowerFloor);
-            floor.refresh(floorContent.type, floorContent.id, isReady);
+            floor.refresh(floorContent.type, floorContent.id, i + 1, isReady);
             floor.block(index !== i);
 
             floorNode.off('click');
             if (isReady) {
                 floorNode.on('click', () => {
-                    console.log(`Clicked on ${floorContent.id}`);
                     floor.enter();
                 });
                 floorNode.getComponent(Button).enabled = true;
             }
-        }
-
+        });
         prefab.destroy();
 
-        // console.log(this._stage);
+        this.leaveButton.node.active = index === this._floorCount;
         this.scrollView.scrollToPercentVertical(index / this._floorCount, 0.25);
     }
 
     saveData(): void {
-        // console.log('hero saving data');
         StorageTool.saveToFile(`${this._towerId}_tower_data`, {
             index: this._floorIndex,
+            stage: this._stage,
+            resolved: this._resolved,
         });
     }
 
@@ -166,6 +182,14 @@ export class Tower extends Component {
             return;
         }
 
+        // 事件跟寶箱是一次性的，重複挑戰不會再重置
+        if (event.detail.type === 'dungeonEvent' || event.detail.type === 'dungeonChest') {
+            if (this._resolved.indexOf(event.detail.id) === -1) {
+                this._resolved.push(event.detail.id);
+            }
+        }
+        // console.log(this._resolved);
+
         const children = this.scrollView.content.children;
         children.forEach((child) => child.off('click'));
         children[this._floorIndex].getComponent(Button).enabled = false;
@@ -174,7 +198,7 @@ export class Tower extends Component {
         this.saveData();
 
         if (this._floorIndex < this._floorCount) {
-            this.buildTower();
+            this.updateTower();
         } else {
             this.popupWindow.openPopup('挑戰成功', '完成探索，獲得獎勵', [{
                 label: '領取獎勵', callback: () => {

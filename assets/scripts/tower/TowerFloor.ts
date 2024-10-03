@@ -1,4 +1,4 @@
-import { _decorator, Component, instantiate, Label, Node, Event, ScrollView, Sprite } from 'cc';
+import { _decorator, Component, Label, Node, Event, Sprite } from 'cc';
 import { PopupWindowComponent } from '../window/PopupWindowComponent';
 const { ccclass, property } = _decorator;
 
@@ -16,6 +16,9 @@ export class TowerFloor extends Component {
     @property(Label)
     titleLabel: Label = null;
 
+    @property(Label)
+    floorLabel: Label = null;
+
     @property(Node)
     mistFront: Node = null;
 
@@ -25,13 +28,24 @@ export class TowerFloor extends Component {
     @property(PopupWindowComponent)
     popupWindow: PopupWindowComponent = null;
 
+    private _floorId: string = '';
     private _type: string = '';
+    private _floor: number = 0;
 
-    refresh(type: string, id: string, isReady: boolean): void {
+    refresh(type: string, id: string, floor: number, isReady: boolean): void {
+        this._floorId = id;
         this._type = type;
+        this._floor = floor;
 
         this.titleLabel.string = id;// todo 讀 enemyTeam、chest、event 等的資料來處理
+        this.floorLabel.string = floor.toString();
         this.contentSprite.node.active = isReady;
+
+        if (!isReady && this._type === 'dungeonChest') {
+            // 寶箱已開啟, 換張寶箱開啟的圖片
+            this.contentSprite.node.active = true;
+        }
+        // console.log(this._type === 'dungeonEvent');
     }
 
     enter(): void {
@@ -75,6 +89,6 @@ export class TowerFloor extends Component {
     finish(success: boolean): void {
         // 內容物件要隱藏
         this.contentSprite.node.active = false;
-        this.node.dispatchEvent(new TowerDungeonEvent(TowerDungeonEvent.CLEAR_TOWER_FLOOR, true, { challenged: success }));
+        this.node.dispatchEvent(new TowerDungeonEvent(TowerDungeonEvent.CLEAR_TOWER_FLOOR, true, { challenged: success, type: this._type, id: this._floorId }));
     }
 }
